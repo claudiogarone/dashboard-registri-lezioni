@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -11,11 +12,11 @@ import re
 st.set_page_config(page_title="Registri Lezioni - Dashboard", layout="wide")
 
 FOLDER_ID = "1fsy7Ep3Kbyfhx3NEfnZDryHNfefHmDBM"
-
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
+
 
 def norm_text(x):
     if pd.isna(x):
@@ -27,11 +28,13 @@ def norm_text(x):
     s = re.sub(r"\s+", " ", s)
     return s
 
+
 def safe_sorted_unique(series):
     if series is None:
         return []
     vals = series.dropna().map(norm_text).dropna().astype(str).unique().tolist()
     return sorted(vals, key=lambda v: v.lower())
+
 
 def to_hours(duration_str):
     x = norm_text(duration_str)
@@ -46,35 +49,31 @@ def to_hours(duration_str):
     except Exception:
         return 0.0
 
+
 def money_fmt(x):
     try:
         return f"€ {float(x):,.2f}"
     except Exception:
         return "€ 0,00"
 
+
 @st.cache_resource(show_spinner=False)
 def get_credentials():
-    return Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=SCOPES
-    )
+    return Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+
 
 @st.cache_data(ttl=300, show_spinner="Aggiornamento elenco fogli...")
 def list_sheet_files(_creds):
     service = build("drive", "v3", credentials=_creds)
-    query = (
-        f"'{FOLDER_ID}' in parents and "
-        "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
-    )
-    results = service.files().list(
-        q=query, fields="files(id, name)", pageSize=200
-    ).execute()
+    query = f"'{FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    results = service.files().list(q=query, fields="files(id, name)", pageSize=200).execute()
     return results.get("files", [])
+
 
 @st.cache_data(ttl=300, show_spinner="Caricamento registri lezioni...")
 def load_all_data(_creds, files):
     gc = gspread.authorize(_creds)
     frames = []
-
     for f in files:
         try:
             sh = gc.open_by_key(f["id"])
@@ -87,7 +86,6 @@ def load_all_data(_creds, files):
             frames.append(df)
         except Exception as e:
             st.warning(f"Impossibile leggere il file '{f['name']}': {e}")
-
     if not frames:
         return pd.DataFrame()
 
@@ -97,9 +95,7 @@ def load_all_data(_creds, files):
         if data[col].dtype == object:
             data[col] = data[col].map(norm_text)
 
-    for col in ["Allievo", "Materia", "Mese", "Anno", "Stato_Pagamento",
-                "Compito Assegnato (Si/No)", "Compito Superato (Si/No)",
-                "Argomento", "Note", "Pagamento Ricevuto"]:
+    for col in ["Allievo", "Materia", "Mese", "Anno", "Stato_Pagamento", "Compito Assegnato (Si/No)", "Compito Superato (Si/No)", "Argomento", "Note", "Pagamento Ricevuto"]:
         if col in data.columns:
             data[col] = data[col].map(norm_text)
 
@@ -118,7 +114,6 @@ def load_all_data(_creds, files):
         if cand in data.columns:
             pay_col = cand
             break
-
     if pay_col:
         data["Pagamento_num"] = pd.to_numeric(
             data[pay_col].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
@@ -128,9 +123,7 @@ def load_all_data(_creds, files):
         data["Pagamento_num"] = 0.0
 
     if "Data Pagamento" in data.columns:
-        data["Data_Pagamento_dt"] = pd.to_datetime(
-            data["Data Pagamento"].astype(str).str.strip(), errors="coerce", dayfirst=True
-        )
+        data["Data_Pagamento_dt"] = pd.to_datetime(data["Data Pagamento"].astype(str).str.strip(), errors="coerce", dayfirst=True)
 
     if "Pagamento Ricevuto" in data.columns:
         data["Stato_Pagamento"] = data["Pagamento Ricevuto"].fillna("Non specificato")
@@ -140,18 +133,17 @@ def load_all_data(_creds, files):
 
     return data
 
+
 st.title("Dashboard Registri Lezioni Private")
 st.caption("Dati letti in tempo reale dalla cartella Google Drive 'Registri Lezioni'")
 
 creds = get_credentials()
 files = list_sheet_files(creds)
-
 if not files:
     st.error("Nessun foglio Google trovato nella cartella. Verifica condivisione e ID cartella.")
     st.stop()
 
 df = load_all_data(creds, files)
-
 if df.empty:
     st.error("Nessun dato disponibile nei fogli trovati.")
     st.stop()
@@ -168,8 +160,7 @@ min_date = df["Data_dt"].min() if "Data_dt" in df.columns else pd.NaT
 max_date = df["Data_dt"].max() if "Data_dt" in df.columns else pd.NaT
 date_range = st.sidebar.date_input(
     "Intervallo date lezione",
-    value=(min_date.date() if pd.notna(min_date) else datetime.today(),
-           max_date.date() if pd.notna(max_date) else datetime.today()),
+    value=(min_date.date() if pd.notna(min_date) else datetime.today(), max_date.date() if pd.notna(max_date) else datetime.today()),
 )
 
 stati_pagamento = safe_sorted_unique(df["Stato_Pagamento"]) if "Stato_Pagamento" in df.columns else []
@@ -190,32 +181,23 @@ anni_disponibili = safe_sorted_unique(df["Anno"]) if "Anno" in df.columns else [
 sel_anni = st.sidebar.multiselect("Anno", anni_disponibili, default=anni_disponibili) if anni_disponibili else []
 
 mask = pd.Series(True, index=df.index)
-
 if "Allievo" in df.columns and sel_allievi:
     mask &= df["Allievo"].map(norm_text).astype(str).isin(sel_allievi)
-
 if "Materia" in df.columns and sel_materie:
     mask &= df["Materia"].map(norm_text).astype(str).isin(sel_materie)
-
 if isinstance(date_range, tuple) and len(date_range) == 2 and "Data_dt" in df.columns:
     start, end = date_range
     mask &= df["Data_dt"].dt.date.between(start, end)
-
 if "Stato_Pagamento" in df.columns and sel_stati_pagamento:
     mask &= df["Stato_Pagamento"].map(norm_text).astype(str).isin(sel_stati_pagamento)
-
 if "Compito Assegnato (Si/No)" in df.columns and sel_compito_assegnato:
     mask &= df["Compito Assegnato (Si/No)"].map(norm_text).astype(str).isin(sel_compito_assegnato)
-
 if "Compito Superato (Si/No)" in df.columns and sel_compito_superato:
     mask &= df["Compito Superato (Si/No)"].map(norm_text).astype(str).isin(sel_compito_superato)
-
 if "Mese" in df.columns and sel_mesi:
     mask &= df["Mese"].map(norm_text).astype(str).isin(sel_mesi)
-
 if "Anno" in df.columns and sel_anni:
     mask &= df["Anno"].map(norm_text).astype(str).isin(sel_anni)
-
 if argomento_search:
     cols_txt = [c for c in ["Argomento", "Note"] if c in df.columns]
     txt_mask = pd.Series(False, index=df.index)
@@ -246,32 +228,23 @@ col5.metric("Lezioni non pagate", len(non_pagate))
 
 st.divider()
 
-tab_ore, tab_soldi, tab_argomenti, tab_presenze, tab_cluster, tab_dettaglio = st.tabs(
-    ["Ore", "Pagamenti", "Argomenti", "Presenze", "Sotto-cluster", "Dettaglio"]
-)
+tab_ore, tab_soldi, tab_argomenti, tab_presenze, tab_cluster, tab_dettaglio = st.tabs(["Ore", "Pagamenti", "Argomenti", "Presenze", "Sotto-cluster", "Dettaglio"])
 
 with tab_ore:
     st.subheader("Andamento ore di lezione nel tempo")
     granularita = st.radio("Aggrega per", ["Settimana", "Mese"], horizontal=True, key="gran_ore")
     freq = "W" if granularita == "Settimana" else "M"
     if "Data_dt" in fdf.columns and "Totale Ore_h" in fdf.columns:
-        trend = (
-            fdf.dropna(subset=["Data_dt"])
-            .groupby([pd.Grouper(key="Data_dt", freq=freq), "Allievo"])["Totale Ore_h"]
-            .sum()
-            .reset_index()
-        )
+        trend = fdf.dropna(subset=["Data_dt"]).groupby([pd.Grouper(key="Data_dt", freq=freq), "Allievo"])["Totale Ore_h"].sum().reset_index()
         if not trend.empty:
-            fig1 = px.line(trend, x="Data_dt", y="Totale Ore_h", color="Allievo", markers=True,
-                           labels={"Data_dt": granularita, "Totale Ore_h": "Ore"})
+            fig1 = px.line(trend, x="Data_dt", y="Totale Ore_h", color="Allievo", markers=True, labels={"Data_dt": granularita, "Totale Ore_h": "Ore"})
             st.plotly_chart(fig1, use_container_width=True)
 
     st.subheader("Totale ore per allievo")
     if "Totale Ore_h" in fdf.columns:
         tot_ore = fdf.groupby("Allievo")["Totale Ore_h"].sum().reset_index().sort_values("Totale Ore_h", ascending=False)
         if not tot_ore.empty:
-            fig2 = px.bar(tot_ore, x="Allievo", y="Totale Ore_h", text_auto=".1f",
-                          labels={"Totale Ore_h": "Ore totali"})
+            fig2 = px.bar(tot_ore, x="Allievo", y="Totale Ore_h", text_auto=".1f", labels={"Totale Ore_h": "Ore totali"})
             st.plotly_chart(fig2, use_container_width=True)
 
     if "Materia" in fdf.columns and "Totale Ore_h" in fdf.columns:
@@ -286,32 +259,22 @@ with tab_soldi:
     gran_pay = st.radio("Aggrega per", ["Settimana", "Mese"], horizontal=True, key="gran_pay")
     freq_pay = "W" if gran_pay == "Settimana" else "M"
     if "Data_dt" in fdf.columns:
-        pay_time = (
-            fdf.dropna(subset=["Data_dt"])
-            .groupby([pd.Grouper(key="Data_dt", freq=freq_pay)])["Pagamento_num"]
-            .sum()
-            .reset_index()
-        )
+        pay_time = fdf.dropna(subset=["Data_dt"]).groupby([pd.Grouper(key="Data_dt", freq=freq_pay)])['Pagamento_num'].sum().reset_index()
         pay_time["Cumulato"] = pay_time["Pagamento_num"].cumsum()
         c1, c2 = st.columns(2)
         with c1:
             if not pay_time.empty:
-                fig_pt = px.bar(pay_time, x="Data_dt", y="Pagamento_num",
-                                labels={"Data_dt": gran_pay, "Pagamento_num": "Incassato (EUR)"},
-                                title="Incassato per periodo")
+                fig_pt = px.bar(pay_time, x="Data_dt", y="Pagamento_num", labels={"Data_dt": gran_pay, "Pagamento_num": "Incassato (EUR)"}, title="Incassato per periodo")
                 st.plotly_chart(fig_pt, use_container_width=True)
         with c2:
             if not pay_time.empty:
-                fig_cum = px.area(pay_time, x="Data_dt", y="Cumulato",
-                                  labels={"Data_dt": gran_pay, "Cumulato": "Incassato cumulato (EUR)"},
-                                  title="Incasso cumulato nel tempo")
+                fig_cum = px.area(pay_time, x="Data_dt", y="Cumulato", labels={"Data_dt": gran_pay, "Cumulato": "Incassato cumulato (EUR)"}, title="Incasso cumulato nel tempo")
                 st.plotly_chart(fig_cum, use_container_width=True)
 
     st.subheader("Incassato per allievo")
     pay_sum = fdf.groupby("Allievo")["Pagamento_num"].sum().reset_index().sort_values("Pagamento_num", ascending=False)
     if not pay_sum.empty:
-        fig5b = px.bar(pay_sum, x="Allievo", y="Pagamento_num", text_auto=".2f",
-                       labels={"Pagamento_num": "Totale incassato (EUR)"})
+        fig5b = px.bar(pay_sum, x="Allievo", y="Pagamento_num", text_auto=".2f", labels={"Pagamento_num": "Totale incassato (EUR)"})
         st.plotly_chart(fig5b, use_container_width=True)
 
     if "Materia" in fdf.columns:
@@ -337,8 +300,7 @@ with tab_soldi:
 
     st.subheader("Lezioni non pagate / in sospeso")
     cols_show = [c for c in ["Data", "Allievo", "Materia", "Numero Lezione", "Stato_Pagamento", "Pagamento_num"] if c in fdf.columns]
-    st.dataframe(non_pagate[cols_show] if not non_pagate.empty else pd.DataFrame(columns=cols_show),
-                 use_container_width=True, hide_index=True)
+    st.dataframe(non_pagate[cols_show] if not non_pagate.empty else pd.DataFrame(columns=cols_show), use_container_width=True, hide_index=True)
 
 with tab_argomenti:
     st.subheader("Argomenti trattati")
@@ -347,12 +309,13 @@ with tab_argomenti:
         arg_df = fdf if arg_sel == "Tutti" else fdf[fdf["Allievo"] == arg_sel]
         cols_arg = [c for c in ["Data", "Allievo", "Materia", "Numero Lezione", "Argomento"] if c in arg_df.columns]
         if cols_arg:
-            sort_col = "Data_dt" if "Data_dt" in arg_df.columns else (cols_arg[0] if cols_arg else None)
-            if sort_col:
-                st.dataframe(
-                    arg_df[cols_arg].sort_values(sort_col, na_position="last"),
-                    use_container_width=True, hide_index=True,
-                )
+            if "Data_dt" in arg_df.columns:
+                display_df = arg_df[cols_arg + ["Data_dt"]].sort_values("Data_dt", na_position="last").drop(columns=["Data_dt"])
+            elif "Data" in arg_df.columns:
+                display_df = arg_df[cols_arg].sort_values("Data", na_position="last")
+            else:
+                display_df = arg_df[cols_arg]
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 with tab_presenze:
     st.subheader("Lezioni svolte per mese")
@@ -364,7 +327,6 @@ with tab_presenze:
         if not pres_count.empty:
             fig4 = px.bar(pres_count, x="Mese_anno", y="Lezioni", color="Allievo", barmode="group")
             st.plotly_chart(fig4, use_container_width=True)
-
     if "Voto" in fdf.columns:
         st.subheader("Andamento voti/valutazioni")
         voto_df = fdf.copy()
