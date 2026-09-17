@@ -154,11 +154,23 @@ sel_compito_superato = st.sidebar.multiselect("Compito superato", compito_supera
 
 argomento_search = st.sidebar.text_input("Cerca in Argomento/Note (testo libero)")
 
-mesi_disponibili = sorted(df["Mese"].dropna().unique().tolist()) if "Mese" in df.columns else []
-sel_mesi = st.sidebar.multiselect("Mese", mesi_disponibili, default=mesi_disponibili) if mesi_disponibili else []
+mesi_disponibili = (
+    sorted(df["Mese"].dropna().astype(str).unique().tolist())
+    if "Mese" in df.columns else []
+)
+sel_mesi = (
+    st.sidebar.multiselect("Mese", mesi_disponibili, default=mesi_disponibili)
+    if mesi_disponibili else []
+)
 
-anni_disponibili = sorted(df["Anno"].dropna().unique().tolist()) if "Anno" in df.columns else []
-sel_anni = st.sidebar.multiselect("Anno", anni_disponibili, default=anni_disponibili) if anni_disponibili else []
+anni_disponibili = (
+    sorted(df["Anno"].dropna().astype(str).unique().tolist())
+    if "Anno" in df.columns else []
+)
+sel_anni = (
+    st.sidebar.multiselect("Anno", anni_disponibili, default=anni_disponibili)
+    if anni_disponibili else []
+)
 
 # ---------------- APPLICAZIONE FILTRI ----------------
 mask = df["Allievo"].isin(sel_allievi)
