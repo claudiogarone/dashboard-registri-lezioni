@@ -115,8 +115,14 @@ def load_all_data(_creds, files):
         if col in data.columns:
             data[col] = data[col].map(norm_text)
 
-    if "Allievo" not in data.columns or data["Allievo"].dropna().empty:
+    # IMPORTANTE: se manca l'Allievo, usa il nome del file SOLO per le righe
+    # dove Allievo e' vuoto, senza cancellare i nomi gia' presenti negli altri fogli
+    if "Allievo" not in data.columns:
         data["Allievo"] = data["__file_name"].map(norm_text)
+    else:
+        mancanti = data["Allievo"].isna()
+        if mancanti.any():
+            data.loc[mancanti, "Allievo"] = data.loc[mancanti, "__file_name"].map(norm_text)
 
     if "Data" in data.columns:
         data["Data_dt"] = pd.to_datetime(
@@ -244,11 +250,20 @@ if argomento_search:
 fdf = df[mask].copy()
 
 st.sidebar.markdown(f"**Righe filtrate:** {len(fdf)} / {len(df)}")
-st.sidebar.markdown(f"**Ultimo aggiornamento:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+st.sidebar.markdown(f"**Ultimo aggiornamento:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 if st.sidebar.button("Forza aggiornamento dati"):
     st.cache_data.clear()
     st.cache_resource.clear()
     st.rerun()
+
+with st.sidebar.expander("Diagnostica dati (debug)"):
+    st.write("Fogli letti da Drive:", [f["name"] for f in files])
+    st.write("Righe totali caricate:", len(df))
+    st.write("Valori distinti in Allievo:", df["Allievo"].nunique() if "Allievo" in df.columns else 0)
+    if "Allievo" in df.columns:
+        conteggio = df["Allievo"].value_counts(dropna=False).reset_index()
+        conteggio.columns = ["Allievo", "Numero righe"]
+        st.dataframe(conteggio, use_container_width=True, hide_index=True)
 
 if fdf.empty:
     st.warning("Nessuna riga corrisponde ai filtri selezionati.")
@@ -427,8 +442,16 @@ with tab_cluster:
             sun_metric = st.selectbox("Metrica sunburst", ["Ore totali", "Incassato (EUR)"], key="sun_metric")
             sun_col = "Totale Ore_h" if sun_metric == "Ore totali" else "Pagamento_num"
             if sun_col in fdf.columns:
-                fig_sun = px.sunburst(fdf, path=sun_dims, values=sun_col)
-                st.plotly_chart(fig_sun, use_container_width=True)
+                sun_src = fdf.dropna(subset=sun_dims).copy()
+                for d in sun_dims:
+                    sun_src[d] = sun_src[d].astype(str)
+                agg_sun = sun_src.groupby(sun_dims)[sun_col].sum().reset_index()
+                agg_sun = agg_sun[agg_sun[sun_col] > 0]
+                if not agg_sun.empty:
+                    fig_sun = px.sunburst(agg_sun, path=sun_dims, values=sun_col)
+                    st.plotly_chart(fig_sun, use_container_width=True)
+                else:
+                    st.info("Dati insufficienti per generare il sunburst con i livelli selezionati.")
 
 with tab_dettaglio:
     st.subheader("Dettaglio registro (righe filtrate)")
