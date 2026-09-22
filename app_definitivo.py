@@ -62,6 +62,20 @@ def periodize(dt_series, granularita):
     return dt_series.dt.to_period(freq).dt.start_time
 
 
+# Solo le schede il cui titolo contiene una di queste parole verranno lette.
+# Tutte le altre (es. "Monitoraggio", "Appoggio") vengono SEMPRE ignorate.
+SCHEDE_VALIDE_KEYWORDS = ["registro"]
+SCHEDE_ESCLUSE_KEYWORDS = ["monitoraggio", "appoggio"]
+
+
+def scheda_da_leggere(titolo_scheda):
+    t = norm_text(titolo_scheda)
+    t = str(t).lower() if pd.notna(t) else ""
+    if any(k in t for k in SCHEDE_ESCLUSE_KEYWORDS):
+        return False
+    return any(k in t for k in SCHEDE_VALIDE_KEYWORDS)
+
+
 @st.cache_resource(show_spinner=False)
 def get_credentials():
     return Credentials.from_service_account_info(
@@ -86,6 +100,7 @@ def list_sheet_files(_creds):
 def load_all_data(_creds, files):
     gc = gspread.authorize(_creds)
     frames = []
+    schede_ignorate = []
 
     for f in files:
         try:
@@ -96,6 +111,9 @@ def load_all_data(_creds, files):
             continue
 
         for ws in worksheets:
+            if not scheda_da_leggere(ws.title):
+                schede_ignorate.append(f"{f['name']} -> {ws.title}")
+                continue
             try:
                 records = ws.get_all_records()
                 if not records:
@@ -108,7 +126,7 @@ def load_all_data(_creds, files):
                 st.warning(f"Impossibile leggere la scheda '{ws.title}' nel file '{f['name']}': {e}")
 
     if not frames:
-        return pd.DataFrame()
+        return pd.DataFrame(), schede_ignorate
 
     data = pd.concat(frames, ignore_index=True, sort=False)
 
@@ -122,14 +140,14 @@ def load_all_data(_creds, files):
         if col in data.columns:
             data[col] = data[col].map(norm_text)
 
-    # Se manca Allievo, usa il nome della SCHEDA (tab) come fallback,
-    # non il nome del file: cosi' ogni tab/allievo resta distinto.
+    # Se manca Allievo, usa il nome del FILE (non della scheda, ora che leggiamo
+    # solo "Registro Lezioni" il file coincide con l'allievo/registro reale)
     if "Allievo" not in data.columns:
-        data["Allievo"] = data["__sheet_name"].map(norm_text)
+        data["Allievo"] = data["__file_name"].map(norm_text)
     else:
         mancanti = data["Allievo"].isna()
         if mancanti.any():
-            data.loc[mancanti, "Allievo"] = data.loc[mancanti, "__sheet_name"].map(norm_text)
+            data.loc[mancanti, "Allievo"] = data.loc[mancanti, "__file_name"].map(norm_text)
 
     # Rimuovi righe completamente vuote (senza data, senza ore, senza argomento)
     colonne_check = [c for c in ["Data", "Totale Ore", "Durata Lezione (Ore)", "Argomento"] if c in data.columns]
@@ -173,7 +191,7 @@ def load_all_data(_creds, files):
     else:
         data["Stato_Pagamento"] = "Non specificato"
 
-    return data
+    return data, schede_ignorate
 
 
 st.title("Dashboard Registri Lezioni Private")
@@ -186,10 +204,10 @@ if not files:
     st.error("Nessun foglio Google trovato nella cartella. Verifica condivisione e ID cartella.")
     st.stop()
 
-df = load_all_data(creds, files)
+df, schede_ignorate = load_all_data(creds, files)
 
 if df.empty:
-    st.error("Nessun dato disponibile nei fogli trovati.")
+    st.error("Nessun dato disponibile nei fogli trovati (verifica che le schede si chiamino 'Registro Lezioni').")
     st.stop()
 
 st.sidebar.header("Filtri")
@@ -273,9 +291,12 @@ with st.sidebar.expander("Diagnostica dati (debug)"):
     st.write("File Google Sheet trovati:", [f["name"] for f in files])
     st.write("Righe totali caricate:", len(df))
     st.write("Valori distinti in Allievo:", df["Allievo"].nunique() if "Allievo" in df.columns else 0)
+    if schede_ignorate:
+        st.write("Schede escluse (Monitoraggio/Appoggio/altro):")
+        st.write(schede_ignorate)
     if "__file_name" in df.columns and "__sheet_name" in df.columns:
         combo = df[["__file_name", "__sheet_name", "Allievo"]].drop_duplicates()
-        combo.columns = ["File", "Scheda (tab)", "Allievo rilevato"]
+        combo.columns = ["File", "Scheda letta", "Allievo rilevato"]
         st.dataframe(combo, use_container_width=True, hide_index=True)
     if "Allievo" in df.columns:
         conteggio = df["Allievo"].value_counts(dropna=False).reset_index()
