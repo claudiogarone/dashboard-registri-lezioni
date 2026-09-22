@@ -90,15 +90,22 @@ def load_all_data(_creds, files):
     for f in files:
         try:
             sh = gc.open_by_key(f["id"])
-            ws = sh.sheet1
-            records = ws.get_all_records()
-            if not records:
-                continue
-            df = pd.DataFrame(records)
-            df["__file_name"] = f["name"]
-            frames.append(df)
+            worksheets = sh.worksheets()
         except Exception as e:
-            st.warning(f"Impossibile leggere il file '{f['name']}': {e}")
+            st.warning(f"Impossibile aprire il file '{f['name']}': {e}")
+            continue
+
+        for ws in worksheets:
+            try:
+                records = ws.get_all_records()
+                if not records:
+                    continue
+                df = pd.DataFrame(records)
+                df["__file_name"] = f["name"]
+                df["__sheet_name"] = ws.title
+                frames.append(df)
+            except Exception as e:
+                st.warning(f"Impossibile leggere la scheda '{ws.title}' nel file '{f['name']}': {e}")
 
     if not frames:
         return pd.DataFrame()
@@ -115,14 +122,20 @@ def load_all_data(_creds, files):
         if col in data.columns:
             data[col] = data[col].map(norm_text)
 
-    # IMPORTANTE: se manca l'Allievo, usa il nome del file SOLO per le righe
-    # dove Allievo e' vuoto, senza cancellare i nomi gia' presenti negli altri fogli
+    # Se manca Allievo, usa il nome della SCHEDA (tab) come fallback,
+    # non il nome del file: cosi' ogni tab/allievo resta distinto.
     if "Allievo" not in data.columns:
-        data["Allievo"] = data["__file_name"].map(norm_text)
+        data["Allievo"] = data["__sheet_name"].map(norm_text)
     else:
         mancanti = data["Allievo"].isna()
         if mancanti.any():
-            data.loc[mancanti, "Allievo"] = data.loc[mancanti, "__file_name"].map(norm_text)
+            data.loc[mancanti, "Allievo"] = data.loc[mancanti, "__sheet_name"].map(norm_text)
+
+    # Rimuovi righe completamente vuote (senza data, senza ore, senza argomento)
+    colonne_check = [c for c in ["Data", "Totale Ore", "Durata Lezione (Ore)", "Argomento"] if c in data.columns]
+    if colonne_check:
+        tutte_vuote = data[colonne_check].isna().all(axis=1)
+        data = data[~tutte_vuote].copy()
 
     if "Data" in data.columns:
         data["Data_dt"] = pd.to_datetime(
@@ -257,9 +270,13 @@ if st.sidebar.button("Forza aggiornamento dati"):
     st.rerun()
 
 with st.sidebar.expander("Diagnostica dati (debug)"):
-    st.write("Fogli letti da Drive:", [f["name"] for f in files])
+    st.write("File Google Sheet trovati:", [f["name"] for f in files])
     st.write("Righe totali caricate:", len(df))
     st.write("Valori distinti in Allievo:", df["Allievo"].nunique() if "Allievo" in df.columns else 0)
+    if "__file_name" in df.columns and "__sheet_name" in df.columns:
+        combo = df[["__file_name", "__sheet_name", "Allievo"]].drop_duplicates()
+        combo.columns = ["File", "Scheda (tab)", "Allievo rilevato"]
+        st.dataframe(combo, use_container_width=True, hide_index=True)
     if "Allievo" in df.columns:
         conteggio = df["Allievo"].value_counts(dropna=False).reset_index()
         conteggio.columns = ["Allievo", "Numero righe"]
